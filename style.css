@@ -186,7 +186,7 @@ html, body {
   flex: 0 0 auto;
 }
 
-#shopModal {
+#shopModal, #diffModal {
   position: fixed;
   inset: 0;
   background: rgba(3, 6, 14, 0.7);
@@ -195,9 +195,9 @@ html, body {
   justify-content: center;
   z-index: 20;
 }
-#shopModal.hidden { display: none; }
+#shopModal.hidden, #diffModal.hidden { display: none; }
 
-#shopBox {
+.modal-box {
   width: 100%;
   max-width: 480px;
   background: var(--panel);
@@ -208,7 +208,7 @@ html, body {
 }
 @keyframes slideup { from { transform: translateY(20px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
 
-#shopHeader {
+.modal-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -216,7 +216,7 @@ html, body {
   font-weight: 800;
   font-size: 16px;
 }
-#shopClose {
+.modal-close {
   background: var(--panel-2);
   border: 1px solid #38446a;
   color: var(--text);
@@ -247,3 +247,25 @@ html, body {
 .shop-cost { font-weight: 800; color: var(--gold); font-size: 13px; white-space: nowrap; }
 .shop-option.sell { border-color: var(--danger); }
 .shop-option.sell .shop-cost { color: var(--danger); }
+
+.diff-option {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  background: var(--panel-2);
+  border: 2px solid #38446a;
+  border-radius: 14px;
+  padding: 12px 14px;
+  cursor: pointer;
+  text-align: left;
+  width: 100%;
+}
+.diff-option.selected { border-color: var(--accent); }
+.diff-name { font-weight: 900; font-size: 16px; }
+.diff-name.easy { color: var(--good); }
+.diff-name.normal { color: var(--accent); }
+.diff-name.hard { color: var(--danger); }
+.diff-desc { font-size: 12.5px; color: var(--text-dim); }
+.diff-stats { font-size: 11.5px; color: var(--text-dim); margin-top: 2px; }
+
+#livesDisplay { font-size: 13px; letter-spacing: -1px; }

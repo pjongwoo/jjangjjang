@@ -4,9 +4,26 @@
 const LANES = 5;
 const ROWS = 6;
 const MAX_COUNT = 999999999;
-const BASE_BOSS_HP = 260;
-const BOSS_GROWTH = 1.32;
-const DPS_CONST = 1.0;
+const BASE_BOSS_HP = 34;
+const BOSS_GROWTH = 1.26;
+
+const DIFFICULTIES = {
+  easy: {
+    key: "easy", label: "쉬움",
+    lives: 5, mobCrossTime: 7.5, bossCrossTimeMult: 2.0, bossHpMult: 0.7, spawnInterval: 0.9,
+    desc: "적이 느리게 내려오고 생명이 넉넉해요. 처음이라면 이걸로 시작하세요.",
+  },
+  normal: {
+    key: "normal", label: "보통",
+    lives: 3, mobCrossTime: 5.5, bossCrossTimeMult: 1.8, bossHpMult: 1.0, spawnInterval: 0.65,
+    desc: "적당한 속도와 균형 잡힌 난이도예요.",
+  },
+  hard: {
+    key: "hard", label: "어려움",
+    lives: 2, mobCrossTime: 3.8, bossCrossTimeMult: 1.6, bossHpMult: 1.4, spawnInterval: 0.45,
+    desc: "적이 빠르게 내려오고 생명이 적어요. 실력자용!",
+  },
+};
 
 const GATE_TYPES = {
   mult: {
@@ -20,7 +37,7 @@ const GATE_TYPES = {
       { factor: 6, cost: 180 },
       { factor: 10, cost: 360 },
     ],
-    desc: (t) => `통과하는 무리 수를 ×${t.factor} 로 만듭니다`,
+    desc: (t) => `통과하는 총알 수를 ×${t.factor} 로 만듭니다`,
     label: (t) => `×${t.factor}`,
   },
   add: {
@@ -33,7 +50,7 @@ const GATE_TYPES = {
       { amount: 10, cost: 70 },
       { amount: 20, cost: 150 },
     ],
-    desc: (t) => `무리에 몹 ${t.amount}마리를 추가합니다`,
+    desc: (t) => `통과하는 총알에 ${t.amount}발을 추가합니다`,
     label: (t) => `+${t.amount}`,
   },
   power: {
@@ -45,7 +62,7 @@ const GATE_TYPES = {
       { factor: 2, cost: 45 },
       { factor: 3, cost: 100 },
     ],
-    desc: (t) => `무리의 공격력을 ×${t.factor} 로 만듭니다`,
+    desc: (t) => `총알 1발의 데미지를 ×${t.factor} 로 만듭니다 (보스에게 효과적)`,
     label: (t) => `⚔×${t.factor}`,
   },
   coin: {
@@ -57,7 +74,7 @@ const GATE_TYPES = {
       { amount: 8, cost: 40 },
       { amount: 18, cost: 90 },
     ],
-    desc: (t) => `무리가 지날 때마다 코인 ${t.amount}개 획득`,
+    desc: (t) => `총알이 지날 때마다 코인 ${t.amount}개 획득`,
     label: (t) => `$${t.amount}`,
   },
 };
@@ -65,24 +82,25 @@ const GATE_TYPES = {
 /* ===================== 상태 ===================== */
 const state = {
   W: 480, H: 800,
-  laneCenters: [], rowY: [], trackTop: 0, trackBottom: 0, spawnY: 0, bossTop: 0, bossBottom: 0,
+  laneCenters: [], rowY: [], topLine: 0, bottomLine: 0, rowGap: 0,
   coins: 100,
   wave: 1,
+  lives: 3,
   gates: {},   // gates[row][lane] = { type, level, spent }
   hazards: {}, // hazards[row][lane] = true
-  packets: [],
+  bullets: [],
+  enemies: [],
   floatTexts: [],
   particles: [],
   boss: { hp: BASE_BOSS_HP, maxHp: BASE_BOSS_HP },
-  totalArmyPower: 0,
   currentLane: Math.floor(LANES / 2),
-  phase: "build", // build | battle | victory | defeat
-  spawnedCount: 0,
-  spawnTarget: 12,
-  spawnInterval: 0.4,
-  spawnTimer: 0,
-  battleElapsed: 0,
-  battleTimeLimit: 22,
+  phase: "pending", // pending | build | battle | victory | defeat
+  difficulty: null,
+  mobSpeed: 60, bossSpeed: 30,
+  mobsToSpawn: 8, mobsSpawned: 0, mobSpawnInterval: 0.6, mobSpawnTimer: 0,
+  bossSpawned: false, bossAlive: false,
+  fireInterval: 0.2, fireTimer: 0,
+  totalKilled: 0, totalEnemiesThisWave: 9,
   speedMultiplier: 1,
   rivals: { a: { p: 0, speed: 0 }, b: { p: 0, speed: 0 } },
   shopTarget: null,
@@ -93,7 +111,9 @@ const canvas = document.getElementById("game");
 const ctx = canvas.getContext("2d");
 const coinValueEl = document.getElementById("coinValue");
 const waveValueEl = document.getElementById("waveValue");
+const livesValueEl = document.getElementById("livesValue");
 const speedBtn = document.getElementById("speedBtn");
+const diffBtn = document.getElementById("diffBtn");
 const leftBtn = document.getElementById("leftBtn");
 const rightBtn = document.getElementById("rightBtn");
 const actionBtn = document.getElementById("actionBtn");
@@ -105,6 +125,9 @@ const shopModal = document.getElementById("shopModal");
 const shopTitle = document.getElementById("shopTitle");
 const shopBody = document.getElementById("shopBody");
 const shopClose = document.getElementById("shopClose");
+const diffModal = document.getElementById("diffModal");
+const diffBody = document.getElementById("diffBody");
+const diffClose = document.getElementById("diffClose");
 const youFill = document.getElementById("youFill");
 const botAFill = document.getElementById("botAFill");
 const botBFill = document.getElementById("botBFill");
@@ -131,8 +154,8 @@ function spawnFloatText(x, y, text, color, big) {
   state.floatTexts.push({ x, y, text, color, life: 1, maxLife: 1, vy: -46, big: !!big });
 }
 
-function spawnHitParticle(lane) {
-  state.particles.push({ x: laneCenterX(lane) + (Math.random() * 20 - 10), y: state.bossTop + 6, life: 0.4, maxLife: 0.4 });
+function spawnParticle(x, y, color) {
+  state.particles.push({ x, y, life: 0.35, maxLife: 0.35, color: color || "255, 210, 100" });
 }
 
 /* ===================== 레이아웃 ===================== */
@@ -155,34 +178,82 @@ function computeLayout() {
   state.laneCenters = [];
   for (let i = 0; i < LANES; i++) state.laneCenters.push(laneWidth * (i + 0.5));
 
-  state.trackTop = H * 0.13;
-  state.bossBottom = H - 6;
-  state.bossTop = H * 0.82;
-  state.trackBottom = state.bossTop;
-  state.spawnY = state.trackTop - 14;
+  state.topLine = H * 0.12;      // 적 스폰 라인 (위)
+  state.bottomLine = H * 0.86;   // 플레이어 라인 (아래)
+  state.playerY = state.bottomLine;
 
-  const rowGap = (state.trackBottom - state.trackTop) / ROWS;
+  const rowGap = (state.bottomLine - state.topLine) / ROWS;
   state.rowGap = rowGap;
   state.rowY = [];
-  for (let r = 0; r < ROWS; r++) state.rowY.push(state.trackTop + rowGap * (r + 0.5));
+  for (let r = 0; r < ROWS; r++) state.rowY.push(state.topLine + rowGap * (r + 0.5));
+}
+
+/* ===================== 난이도 / 새 게임 ===================== */
+function renderDiffOptions() {
+  diffBody.innerHTML = "";
+  Object.values(DIFFICULTIES).forEach((d) => {
+    const btn = document.createElement("button");
+    btn.className = "diff-option" + (state.difficulty && state.difficulty.key === d.key ? " selected" : "");
+    btn.innerHTML = `<div class="diff-name ${d.key}">${d.label}</div><div class="diff-desc">${d.desc}</div><div class="diff-stats">생명 ${d.lives}개</div>`;
+    btn.onclick = () => {
+      startNewRun(d.key);
+      diffModal.classList.add("hidden");
+    };
+    diffBody.appendChild(btn);
+  });
+  diffClose.style.visibility = state.difficulty ? "visible" : "hidden";
+}
+
+function openDiffModal() {
+  renderDiffOptions();
+  diffModal.classList.remove("hidden");
+}
+diffBtn.addEventListener("click", openDiffModal);
+diffClose.addEventListener("click", () => {
+  if (state.difficulty) diffModal.classList.add("hidden");
+});
+
+function startNewRun(diffKey) {
+  state.difficulty = DIFFICULTIES[diffKey];
+  state.wave = 1;
+  state.coins = 100;
+  state.gates = {};
+  state.hazards = {};
+  setupWave(true);
 }
 
 /* ===================== 웨이브 설정 ===================== */
 function setupWave(newHazards) {
   state.phase = "build";
-  state.boss.maxHp = Math.round(BASE_BOSS_HP * Math.pow(BOSS_GROWTH, state.wave - 1));
+  const d = state.difficulty;
+  const waveSpeedFactor = Math.max(0.6, 1 - (state.wave - 1) * 0.03);
+
+  state.boss.maxHp = Math.round(BASE_BOSS_HP * Math.pow(BOSS_GROWTH, state.wave - 1) * d.bossHpMult);
   state.boss.hp = state.boss.maxHp;
-  state.packets = [];
+  state.bullets = [];
+  state.enemies = [];
   state.floatTexts = [];
   state.particles = [];
-  state.totalArmyPower = 0;
-  state.spawnedCount = 0;
-  state.spawnTarget = Math.min(46, 12 + state.wave * 2);
-  state.spawnInterval = Math.max(0.16, 0.42 - state.wave * 0.008);
-  state.spawnTimer = 0;
-  state.battleElapsed = 0;
-  state.battleTimeLimit = 20 + state.wave * 0.6;
+  state.lives = d.lives;
   state.currentLane = Math.floor(LANES / 2);
+
+  const zoneLen = state.bottomLine - state.topLine || 500;
+  state.mobSpeed = zoneLen / (d.mobCrossTime * waveSpeedFactor);
+  state.bossSpeed = zoneLen / (d.mobCrossTime * d.bossCrossTimeMult * waveSpeedFactor);
+
+  state.mobsToSpawn = Math.min(30, 8 + state.wave * 2);
+  state.mobsSpawned = 0;
+  state.mobSpawnInterval = Math.max(0.25, d.spawnInterval - state.wave * 0.01);
+  state.mobSpawnTimer = 0.4;
+  state.bossSpawned = false;
+  state.bossAlive = false;
+
+  state.fireInterval = Math.max(0.09, 0.2 - state.wave * 0.004);
+  state.fireTimer = 0;
+
+  state.totalKilled = 0;
+  state.totalEnemiesThisWave = state.mobsToSpawn + 1;
+
   if (newHazards) regenerateHazards();
   resetRivals();
   updateHud();
@@ -223,8 +294,8 @@ function endBattle(won) {
   if (won) {
     state.phase = "victory";
     const base = 40 + state.wave * 18;
-    const timeBonus = Math.max(0, Math.round((state.battleTimeLimit - state.battleElapsed) * 3));
-    const reward = base + timeBonus;
+    const livesBonus = state.lives * 15;
+    const reward = base + livesBonus;
     state.coins += reward;
     updateHud();
     showBanner("승리! 🎉", `보스를 처치했습니다! 코인 +${formatNum(reward)}`, "다음 웨이브", () => {
@@ -233,7 +304,8 @@ function endBattle(won) {
     });
   } else {
     state.phase = "defeat";
-    showBanner("실패...", "제한 시간 안에 보스를 처치하지 못했습니다. 게이트를 보강해보세요!", "다시 도전", () => {
+    const reason = state.lives <= 0 ? "생명을 모두 잃었습니다." : "보스가 저지선을 뚫었습니다!";
+    showBanner("실패...", `${reason} 게이트를 보강해서 다시 도전해보세요!`, "다시 도전", () => {
       setupWave(false);
     });
   }
@@ -267,7 +339,7 @@ function openShop(r, l) {
     shopTitle.textContent = "위험 지대 ☠";
     const info = document.createElement("div");
     info.className = "shop-option";
-    info.innerHTML = `<div class="shop-icon">☠</div><div class="shop-info"><div class="shop-name">위험 지대</div><div class="shop-desc">이 칸을 지나가면 무리 수가 절반으로 줄어듭니다. 레인을 옮겨 피하세요!</div></div>`;
+    info.innerHTML = `<div class="shop-icon">☠</div><div class="shop-info"><div class="shop-name">위험 지대</div><div class="shop-desc">이 칸을 지나가는 총알은 절반으로 줄어듭니다. 레인을 옮겨 피하세요!</div></div>`;
     shopBody.appendChild(info);
     shopModal.classList.remove("hidden");
     return;
@@ -378,9 +450,9 @@ canvas.addEventListener("pointerup", (e) => {
   const rect = canvas.getBoundingClientRect();
   const x = e.clientX - rect.left;
   const y = e.clientY - rect.top;
-  if (y < state.trackTop || y > state.trackBottom) return;
+  if (y < state.topLine || y > state.bottomLine) return;
   const l = Math.floor(x / (state.W / LANES));
-  const r = Math.floor((y - state.trackTop) / state.rowGap);
+  const r = Math.floor((y - state.topLine) / state.rowGap);
   if (l < 0 || l >= LANES || r < 0 || r >= ROWS) return;
   openShop(r, l);
 });
@@ -389,10 +461,11 @@ canvas.addEventListener("pointerup", (e) => {
 function updateHud() {
   coinValueEl.textContent = formatNum(state.coins);
   waveValueEl.textContent = state.wave;
+  livesValueEl.textContent = "❤️".repeat(Math.max(0, state.lives));
 }
 
 function updateRivals() {
-  const youPct = Math.min(100, Math.round((1 - state.boss.hp / state.boss.maxHp) * 100));
+  const youPct = Math.min(100, Math.round((state.totalKilled / state.totalEnemiesThisWave) * 100));
   youFill.style.width = youPct + "%";
   botAFill.style.width = Math.min(100, Math.round(state.rivals.a.p * 100)) + "%";
   botBFill.style.width = Math.min(100, Math.round(state.rivals.b.p * 100)) + "%";
@@ -401,10 +474,10 @@ function updateRivals() {
 /* ===================== 게임 루프 ===================== */
 let lastTime = performance.now();
 
-function applyRow(packet, row) {
-  const l = packet.lane;
+function applyRow(bullet, row) {
+  const l = bullet.lane;
   if (state.hazards[row] && state.hazards[row][l]) {
-    packet.count = Math.max(1, Math.floor(packet.count / 2));
+    bullet.count = Math.max(1, Math.floor(bullet.count / 2));
     spawnFloatText(laneCenterX(l), state.rowY[row], "-50%", "#ff5d6c");
     return;
   }
@@ -414,15 +487,15 @@ function applyRow(packet, row) {
   const tier = def.tiers[g.level];
   switch (g.type) {
     case "mult":
-      packet.count = Math.min(MAX_COUNT, Math.round(packet.count * tier.factor));
+      bullet.count = Math.min(MAX_COUNT, Math.round(bullet.count * tier.factor));
       spawnFloatText(laneCenterX(l), state.rowY[row], def.label(tier), def.color, true);
       break;
     case "add":
-      packet.count = Math.min(MAX_COUNT, packet.count + tier.amount);
+      bullet.count = Math.min(MAX_COUNT, bullet.count + tier.amount);
       spawnFloatText(laneCenterX(l), state.rowY[row], def.label(tier), def.color);
       break;
     case "power":
-      packet.power *= tier.factor;
+      bullet.dmg *= tier.factor;
       spawnFloatText(laneCenterX(l), state.rowY[row], def.label(tier), def.color);
       break;
     case "coin":
@@ -433,8 +506,35 @@ function applyRow(packet, row) {
   }
 }
 
+function trySpawnEnemies(dt) {
+  if (state.mobsSpawned < state.mobsToSpawn) {
+    state.mobSpawnTimer -= dt;
+    if (state.mobSpawnTimer <= 0) {
+      state.mobSpawnTimer = state.mobSpawnInterval;
+      state.mobsSpawned++;
+      state.enemies.push({
+        kind: "mob",
+        lane: Math.floor(Math.random() * LANES),
+        y: state.topLine - 16,
+        hp: 1, maxHp: 1,
+      });
+    }
+  } else if (!state.bossSpawned) {
+    state.mobSpawnTimer -= dt;
+    if (state.mobSpawnTimer <= -0.8) {
+      state.bossSpawned = true;
+      state.bossAlive = true;
+      state.enemies.push({
+        kind: "boss",
+        lane: Math.floor(Math.random() * LANES),
+        y: state.topLine - 30,
+        hp: state.boss.maxHp, maxHp: state.boss.maxHp,
+      });
+    }
+  }
+}
+
 function update(dt) {
-  // float texts & particles always animate
   for (let i = state.floatTexts.length - 1; i >= 0; i--) {
     const f = state.floatTexts[i];
     f.life -= dt / f.maxLife;
@@ -450,86 +550,191 @@ function update(dt) {
 
   if (state.phase !== "battle") return;
 
-  state.battleElapsed += dt;
-
   state.rivals.a.p = Math.min(1, state.rivals.a.p + state.rivals.a.speed * dt);
   state.rivals.b.p = Math.min(1, state.rivals.b.p + state.rivals.b.speed * dt);
 
-  if (state.spawnedCount < state.spawnTarget) {
-    state.spawnTimer -= dt;
-    if (state.spawnTimer <= 0) {
-      state.spawnTimer = state.spawnInterval;
-      state.spawnedCount++;
-      state.packets.push({ lane: state.currentLane, y: state.spawnY, count: 1, power: 1, nextRow: 0 });
+  // 총알 발사 (플레이어 위치에서 위로)
+  state.fireTimer -= dt;
+  if (state.fireTimer <= 0) {
+    state.fireTimer = state.fireInterval;
+    state.bullets.push({ lane: state.currentLane, y: state.bottomLine - 10, count: 1, dmg: 1, nextRow: ROWS - 1 });
+  }
+
+  trySpawnEnemies(dt);
+
+  // 총알 이동 (위로)
+  for (let i = state.bullets.length - 1; i >= 0; i--) {
+    const b = state.bullets[i];
+    b.y -= (state.bottomLine - state.topLine) / 0.5 * dt;
+    while (b.nextRow >= 0 && b.y <= state.rowY[b.nextRow]) {
+      applyRow(b, b.nextRow);
+      b.nextRow--;
+    }
+    if (b.y <= state.topLine - 20 || b.count <= 0) {
+      state.bullets.splice(i, 1);
     }
   }
 
-  const speed = (state.trackBottom - state.spawnY) / 2.4;
-
-  for (let i = state.packets.length - 1; i >= 0; i--) {
-    const p = state.packets[i];
-    p.y += speed * dt;
-    while (p.nextRow < ROWS && p.y >= state.rowY[p.nextRow]) {
-      applyRow(p, p.nextRow);
-      p.nextRow++;
-    }
-    if (p.y >= state.trackBottom) {
-      state.totalArmyPower += p.count * p.power;
-      spawnHitParticle(p.lane);
-      state.packets.splice(i, 1);
-    }
-  }
-
-  if (state.totalArmyPower > 0 && state.boss.hp > 0) {
-    state.boss.hp -= state.totalArmyPower * DPS_CONST * dt;
-    if (state.boss.hp <= 0) {
-      state.boss.hp = 0;
-      endBattle(true);
-      return;
+  // 적 이동 (아래로)
+  for (let i = state.enemies.length - 1; i >= 0; i--) {
+    const e = state.enemies[i];
+    const spd = e.kind === "boss" ? state.bossSpeed : state.mobSpeed;
+    e.y += spd * dt;
+    if (e.y >= state.bottomLine) {
+      if (e.kind === "boss") {
+        state.enemies.splice(i, 1);
+        endBattle(false);
+        return;
+      } else {
+        state.lives -= 1;
+        updateHud();
+        spawnFloatText(laneCenterX(e.lane), state.bottomLine - 10, "-1 ❤️", "#ff5d6c", true);
+        state.enemies.splice(i, 1);
+        if (state.lives <= 0) {
+          endBattle(false);
+          return;
+        }
+      }
     }
   }
 
-  if (state.battleElapsed >= state.battleTimeLimit && state.boss.hp > 0) {
-    endBattle(false);
-    return;
+  // 충돌 처리: 같은 레인에서 총알이 적과 만나면 데미지
+  const hitRadius = 20;
+  for (const e of state.enemies) {
+    if (e.hp <= 0) continue;
+    for (const b of state.bullets) {
+      if (b.lane !== e.lane || b.count <= 0) continue;
+      if (Math.abs(b.y - e.y) > hitRadius) continue;
+      const dmg = Math.min(b.count * b.dmg, e.hp);
+      const bulletsUsed = Math.min(b.count, Math.ceil(dmg / b.dmg));
+      e.hp -= dmg;
+      b.count -= bulletsUsed;
+      spawnParticle(laneCenterX(e.lane), e.y, e.kind === "boss" ? "255, 120, 140" : "255, 210, 100");
+      if (e.hp <= 0) break;
+    }
+  }
+
+  // 처치된 적 제거
+  for (let i = state.enemies.length - 1; i >= 0; i--) {
+    const e = state.enemies[i];
+    if (e.hp <= 0) {
+      state.totalKilled++;
+      if (e.kind === "boss") {
+        state.boss.hp = 0;
+        state.enemies.splice(i, 1);
+        endBattle(true);
+        return;
+      } else {
+        state.enemies.splice(i, 1);
+      }
+    } else if (e.kind === "boss") {
+      state.boss.hp = e.hp;
+    }
   }
 
   updateRivals();
 }
 
 /* ===================== 렌더링 ===================== */
-function drawBlob(x, y, count, power) {
-  const r = Math.min(26, 10 + Math.log10(count + 1) * 6);
-  const hue = Math.max(190, 260 - (power - 1) * 40);
+function drawBullet(x, y, count, dmg) {
+  const r = Math.min(16, 5 + Math.log10(count + 1) * 4);
   const grad = ctx.createRadialGradient(x - r * 0.3, y - r * 0.3, r * 0.2, x, y, r);
-  grad.addColorStop(0, `hsl(${hue}, 90%, 72%)`);
-  grad.addColorStop(1, `hsl(${hue}, 80%, 48%)`);
+  const hue = Math.min(200, 170 + (dmg - 1) * 20);
+  grad.addColorStop(0, `hsl(${hue}, 95%, 80%)`);
+  grad.addColorStop(1, `hsl(${hue}, 90%, 55%)`);
   ctx.beginPath();
   ctx.arc(x, y, r, 0, Math.PI * 2);
   ctx.fillStyle = grad;
   ctx.fill();
-  ctx.lineWidth = 2;
-  ctx.strokeStyle = "rgba(0,0,0,0.25)";
+  ctx.lineWidth = 1.5;
+  ctx.strokeStyle = "rgba(255,255,255,0.5)";
   ctx.stroke();
 
-  ctx.fillStyle = "rgba(255,255,255,0.95)";
+  if (count > 1) {
+    ctx.font = "bold 11px system-ui, sans-serif";
+    ctx.textAlign = "center";
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = "rgba(0,0,0,0.65)";
+    ctx.strokeText(formatNum(count), x, y - r - 5);
+    ctx.fillStyle = "#fff";
+    ctx.fillText(formatNum(count), x, y - r - 5);
+  }
+}
+
+function drawMob(x, y) {
+  const r = 15;
   ctx.beginPath();
-  ctx.arc(x - r * 0.32, y - r * 0.05, r * 0.16, 0, Math.PI * 2);
-  ctx.arc(x + r * 0.32, y - r * 0.05, r * 0.16, 0, Math.PI * 2);
+  ctx.arc(x, y, r, 0, Math.PI * 2);
+  const grad = ctx.createRadialGradient(x - 4, y - 4, 3, x, y, r);
+  grad.addColorStop(0, "#ff8b8b");
+  grad.addColorStop(1, "#c22b3f");
+  ctx.fillStyle = grad;
   ctx.fill();
-  ctx.fillStyle = "#12213a";
+  ctx.strokeStyle = "rgba(0,0,0,0.3)";
+  ctx.lineWidth = 2;
+  ctx.stroke();
+  ctx.fillStyle = "#2a0a10";
   ctx.beginPath();
-  ctx.arc(x - r * 0.32, y - r * 0.02, r * 0.08, 0, Math.PI * 2);
-  ctx.arc(x + r * 0.32, y - r * 0.02, r * 0.08, 0, Math.PI * 2);
+  ctx.arc(x - 4, y - 1, 2.2, 0, Math.PI * 2);
+  ctx.arc(x + 4, y - 1, 2.2, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+function drawBoss(x, y, hp, maxHp) {
+  const r = 34;
+  ctx.fillStyle = "#7a1f3d";
+  ctx.beginPath();
+  for (let i = 0; i < 8; i++) {
+    const ang = (i / 8) * Math.PI * 2;
+    const rr = i % 2 === 0 ? r : r * 0.72;
+    const px = x + Math.cos(ang) * rr;
+    const py = y + Math.sin(ang) * rr;
+    if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+  }
+  ctx.closePath();
+  ctx.fill();
+  ctx.fillStyle = "#ffdc5e";
+  ctx.beginPath();
+  ctx.arc(x - r * 0.3, y - r * 0.1, r * 0.14, 0, Math.PI * 2);
+  ctx.arc(x + r * 0.3, y - r * 0.1, r * 0.14, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = "#1a0a12";
+  ctx.beginPath();
+  ctx.arc(x - r * 0.3, y - r * 0.1, r * 0.06, 0, Math.PI * 2);
+  ctx.arc(x + r * 0.3, y - r * 0.1, r * 0.06, 0, Math.PI * 2);
   ctx.fill();
 
-  ctx.font = "bold 13px system-ui, sans-serif";
-  ctx.textAlign = "center";
-  ctx.lineWidth = 3;
-  ctx.strokeStyle = "rgba(0,0,0,0.65)";
-  ctx.strokeText(formatNum(count), x, y - r - 6);
-  ctx.fillStyle = "#fff";
-  ctx.fillText(formatNum(count), x, y - r - 6);
+  const barW = 76, barH = 8, barX = x - barW / 2, barY = y - r - 16;
+  ctx.fillStyle = "rgba(0,0,0,0.5)";
+  roundRect(barX, barY, barW, barH, 4);
+  ctx.fill();
+  const pct = Math.max(0, hp / maxHp);
+  const hpGrad = ctx.createLinearGradient(barX, 0, barX + barW, 0);
+  hpGrad.addColorStop(0, "#ff5d6c");
+  hpGrad.addColorStop(1, "#ffb15e");
+  ctx.fillStyle = hpGrad;
+  roundRect(barX, barY, barW * pct, barH, 4);
+  ctx.fill();
+}
+
+function drawPlayer(x, y) {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.fillStyle = "#5ec6ff";
+  ctx.beginPath();
+  ctx.moveTo(-16, 14);
+  ctx.lineTo(0, -16);
+  ctx.lineTo(16, 14);
+  ctx.closePath();
+  ctx.fill();
+  ctx.strokeStyle = "rgba(255,255,255,0.6)";
+  ctx.lineWidth = 2;
+  ctx.stroke();
+  ctx.fillStyle = "#0d3a57";
+  ctx.beginPath();
+  ctx.arc(0, 4, 5, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
 }
 
 function drawGateSlot(r, l) {
@@ -618,102 +823,59 @@ function draw() {
   ctx.fillRect(0, 0, W, H);
 
   const laneWidth = W / LANES;
-  for (let i = 0; i < LANES; i++) {
-    ctx.fillStyle = i % 2 === 0 ? "rgba(255,255,255,0.02)" : "rgba(255,255,255,0.0)";
-    ctx.fillRect(i * laneWidth, state.trackTop, laneWidth, state.trackBottom - state.trackTop);
-  }
   ctx.strokeStyle = "rgba(255,255,255,0.08)";
   ctx.lineWidth = 1;
   for (let i = 0; i <= LANES; i++) {
     ctx.beginPath();
-    ctx.moveTo(i * laneWidth, state.trackTop);
-    ctx.lineTo(i * laneWidth, state.trackBottom);
+    ctx.moveTo(i * laneWidth, state.topLine - 20);
+    ctx.lineTo(i * laneWidth, state.bottomLine + 20);
     ctx.stroke();
   }
+
+  // 적 스폰 라인 표시
+  ctx.strokeStyle = "rgba(255,93,108,0.35)";
+  ctx.setLineDash([4, 4]);
+  ctx.beginPath();
+  ctx.moveTo(0, state.topLine - 20);
+  ctx.lineTo(W, state.topLine - 20);
+  ctx.stroke();
+  ctx.setLineDash([]);
 
   for (let r = 0; r < ROWS; r++) {
     for (let l = 0; l < LANES; l++) drawGateSlot(r, l);
   }
 
-  // spawn indicator
-  const sx = laneCenterX(state.currentLane);
-  ctx.fillStyle = "#5ec6ff";
+  // 플레이어 저지선
+  ctx.strokeStyle = "rgba(94,198,255,0.35)";
+  ctx.setLineDash([4, 4]);
   ctx.beginPath();
-  ctx.moveTo(sx - 9, state.spawnY - 10);
-  ctx.lineTo(sx + 9, state.spawnY - 10);
-  ctx.lineTo(sx, state.spawnY);
-  ctx.closePath();
-  ctx.fill();
-
-  // boss zone
-  const bossH = state.bossBottom - state.bossTop;
-  const bossGrad = ctx.createLinearGradient(0, state.bossTop, 0, state.bossBottom);
-  bossGrad.addColorStop(0, "rgba(120, 20, 40, 0.35)");
-  bossGrad.addColorStop(1, "rgba(60, 10, 20, 0.15)");
-  ctx.fillStyle = bossGrad;
-  ctx.fillRect(0, state.bossTop, W, bossH);
-
-  const bossCx = W / 2, bossCy = state.bossTop + bossH * 0.62;
-  const bossR = Math.min(46, bossH * 0.55);
-  ctx.fillStyle = "#7a1f3d";
-  ctx.beginPath();
-  for (let i = 0; i < 8; i++) {
-    const ang = (i / 8) * Math.PI * 2;
-    const rr = i % 2 === 0 ? bossR : bossR * 0.72;
-    const px = bossCx + Math.cos(ang) * rr;
-    const py = bossCy + Math.sin(ang) * rr;
-    if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
-  }
-  ctx.closePath();
-  ctx.fill();
-  ctx.fillStyle = "#ffdc5e";
-  ctx.beginPath();
-  ctx.arc(bossCx - bossR * 0.3, bossCy - bossR * 0.1, bossR * 0.14, 0, Math.PI * 2);
-  ctx.arc(bossCx + bossR * 0.3, bossCy - bossR * 0.1, bossR * 0.14, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.fillStyle = "#1a0a12";
-  ctx.beginPath();
-  ctx.arc(bossCx - bossR * 0.3, bossCy - bossR * 0.1, bossR * 0.06, 0, Math.PI * 2);
-  ctx.arc(bossCx + bossR * 0.3, bossCy - bossR * 0.1, bossR * 0.06, 0, Math.PI * 2);
-  ctx.fill();
-
-  // boss hp bar
-  const barW = Math.min(260, W * 0.7), barX = W / 2 - barW / 2, barY = state.bossTop + 6, barH = 12;
-  ctx.fillStyle = "rgba(0,0,0,0.4)";
-  roundRect(barX, barY, barW, barH, 6);
-  ctx.fill();
-  const pct = Math.max(0, state.boss.hp / state.boss.maxHp);
-  const hpGrad = ctx.createLinearGradient(barX, 0, barX + barW, 0);
-  hpGrad.addColorStop(0, "#ff5d6c");
-  hpGrad.addColorStop(1, "#ffb15e");
-  ctx.fillStyle = hpGrad;
-  roundRect(barX, barY, barW * pct, barH, 6);
-  ctx.fill();
-  ctx.font = "bold 10px system-ui, sans-serif";
-  ctx.textAlign = "center";
-  ctx.fillStyle = "#fff";
-  ctx.fillText(`BOSS  ${formatNum(state.boss.hp)} / ${formatNum(state.boss.maxHp)}`, W / 2, barY + barH + 12);
-
-  if (state.phase === "battle") {
-    const remain = Math.max(0, state.battleTimeLimit - state.battleElapsed);
-    ctx.font = "bold 12px system-ui, sans-serif";
-    ctx.fillStyle = remain < 5 ? "#ff5d6c" : "rgba(255,255,255,0.75)";
-    ctx.fillText(`남은 시간 ${remain.toFixed(1)}s`, W / 2, barY - 6);
-  }
+  ctx.moveTo(0, state.bottomLine + 16);
+  ctx.lineTo(W, state.bottomLine + 16);
+  ctx.stroke();
+  ctx.setLineDash([]);
 
   // particles
   for (const p of state.particles) {
     const a = p.life / p.maxLife;
-    ctx.fillStyle = `rgba(255, 210, 100, ${a})`;
+    ctx.fillStyle = `rgba(${p.color}, ${a})`;
     ctx.beginPath();
     ctx.arc(p.x, p.y, 4 + (1 - a) * 10, 0, Math.PI * 2);
     ctx.fill();
   }
 
-  // packets
-  for (const p of state.packets) {
-    drawBlob(laneCenterX(p.lane), p.y, p.count, p.power);
+  // 적 그리기
+  for (const e of state.enemies) {
+    if (e.kind === "boss") drawBoss(laneCenterX(e.lane), e.y, e.hp, e.maxHp);
+    else drawMob(laneCenterX(e.lane), e.y);
   }
+
+  // 총알 그리기
+  for (const b of state.bullets) {
+    drawBullet(laneCenterX(b.lane), b.y, b.count, b.dmg);
+  }
+
+  // 플레이어
+  drawPlayer(laneCenterX(state.currentLane), state.bottomLine + 16);
 
   // float texts
   for (const f of state.floatTexts) {
@@ -726,6 +888,16 @@ function draw() {
     ctx.fillStyle = f.color;
     ctx.fillText(f.text, f.x, f.y);
     ctx.globalAlpha = 1;
+  }
+
+  if (state.phase === "battle") {
+    ctx.font = "bold 12px system-ui, sans-serif";
+    ctx.fillStyle = "rgba(255,255,255,0.75)";
+    ctx.textAlign = "center";
+    const label = state.bossSpawned
+      ? (state.bossAlive ? "보스 접근 중!" : "")
+      : `적 ${state.mobsSpawned}/${state.mobsToSpawn}`;
+    ctx.fillText(label, W / 2, state.topLine - 28);
   }
 }
 
@@ -746,8 +918,8 @@ window.addEventListener("orientationchange", () => setTimeout(resizeCanvas, 200)
 function init() {
   resizeCanvas();
   requestAnimationFrame(() => { resizeCanvas(); });
-  setupWave(true);
   updateHud();
+  openDiffModal();
   lastTime = performance.now();
   requestAnimationFrame(loop);
 }

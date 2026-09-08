@@ -16,6 +16,10 @@
     <div class="hud-item" id="waveDisplay">
       웨이브 <span id="waveValue">1</span>
     </div>
+    <div class="hud-item" id="livesDisplay">
+      <span id="livesValue">❤️❤️❤️</span>
+    </div>
+    <button id="diffBtn" class="hud-btn">난이도</button>
     <button id="speedBtn" class="hud-btn">1x</button>
   </header>
 
@@ -49,16 +53,26 @@
     <button id="rightBtn" class="lane-btn">▶</button>
   </div>
 
-  <p id="hint">빌드 단계에서 칸을 눌러 게이트를 설치하세요. 전투 중에는 ◀ ▶ 또는 방향키/A·D로 레인을 조작합니다.</p>
+  <p id="hint">빌드 단계에서 칸을 눌러 게이트를 설치하세요. 전투 중에는 ◀ ▶ 또는 방향키/A·D로 내 위치를 옮겨 총알로 적을 조준하세요.</p>
 </div>
 
 <div id="shopModal" class="hidden">
-  <div id="shopBox">
-    <div id="shopHeader">
+  <div class="modal-box">
+    <div class="modal-header">
       <span id="shopTitle">게이트 설치</span>
-      <button id="shopClose">✕</button>
+      <button id="shopClose" class="modal-close">✕</button>
     </div>
     <div id="shopBody"></div>
+  </div>
+</div>
+
+<div id="diffModal" class="hidden">
+  <div class="modal-box">
+    <div class="modal-header">
+      <span id="diffTitle">난이도 선택</span>
+      <button id="diffClose" class="modal-close">✕</button>
+    </div>
+    <div id="diffBody"></div>
   </div>
 </div>
 
