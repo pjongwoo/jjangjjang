@@ -222,6 +222,51 @@ function startNewRun(diffKey) {
   setupWave(true);
 }
 
+const CORNER_LANE = 0; // 왼쪽 구석 레인: 항상 +1 게이트로 채워짐
+const FREE_MULT_CAP = 16;
+
+function ensureCornerGates() {
+  for (let r = 0; r < ROWS; r++) {
+    if (!state.gates[r]) state.gates[r] = {};
+    if (!state.gates[r][CORNER_LANE]) {
+      state.gates[r][CORNER_LANE] = { type: "add", level: 0, spent: 0, free: true };
+    }
+  }
+}
+
+function countFreeMultGates() {
+  let n = 0;
+  for (let r = 0; r < ROWS; r++) {
+    if (!state.gates[r]) continue;
+    for (let l = 0; l < LANES; l++) {
+      const g = state.gates[r][l];
+      if (g && g.free && g.type === "mult") n++;
+    }
+  }
+  return n;
+}
+
+function regenerateAutoMultGates() {
+  const already = countFreeMultGates();
+  if (already >= FREE_MULT_CAP) return;
+  const wanted = state.wave === 1 ? 5 : 2;
+  const count = Math.min(wanted, FREE_MULT_CAP - already);
+  let attempts = 0;
+  let placed = 0;
+  while (placed < count && attempts < 100) {
+    attempts++;
+    const r = Math.floor(Math.random() * ROWS);
+    const l = Math.floor(Math.random() * LANES);
+    if (l === CORNER_LANE) continue;
+    if (state.gates[r] && state.gates[r][l]) continue;
+    if (state.hazards[r] && state.hazards[r][l]) continue;
+    if (!state.gates[r]) state.gates[r] = {};
+    const level = Math.random() < 0.65 ? 0 : 1; // 대부분 x2, 가끔 x3
+    state.gates[r][l] = { type: "mult", level, spent: 0, free: true };
+    placed++;
+  }
+}
+
 /* ===================== 웨이브 설정 ===================== */
 function setupWave(newHazards) {
   state.phase = "build";
@@ -254,7 +299,11 @@ function setupWave(newHazards) {
   state.totalKilled = 0;
   state.totalEnemiesThisWave = state.mobsToSpawn + 1;
 
-  if (newHazards) regenerateHazards();
+  ensureCornerGates();
+  if (newHazards) {
+    regenerateHazards();
+    regenerateAutoMultGates();
+  }
   resetRivals();
   updateHud();
   setActionButton("전투 시작", false);
@@ -784,6 +833,13 @@ function drawGateSlot(r, l) {
       ctx.font = "bold 9px system-ui, sans-serif";
       ctx.fillStyle = "rgba(255,255,255,0.85)";
       ctx.fillText("Lv." + (gate.level + 1), cx, cy + h * 0.32);
+    }
+    if (gate.free) {
+      ctx.font = "10px system-ui, sans-serif";
+      ctx.textAlign = "left";
+      ctx.textBaseline = "top";
+      ctx.fillStyle = "rgba(255,255,255,0.9)";
+      ctx.fillText("✨", x0 + 3, y0 + 2);
     }
   } else {
     ctx.strokeStyle = "rgba(255,255,255,0.16)";
