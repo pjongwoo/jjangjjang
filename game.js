@@ -2,7 +2,7 @@
 
 /* ===================== 설정값 ===================== */
 const LANES = 5;
-const ROWS = 6;
+const ROWS = 30;
 const MAX_COUNT = 999999999;
 const BASE_BOSS_HP = 34;
 const BOSS_GROWTH = 1.26;
@@ -41,7 +41,7 @@ const GATE_TYPES = {
     label: (t) => `×${t.factor}`,
   },
   add: {
-    name: "증가 게이트",
+    name: "공격력 아이템",
     color: "#22c1c3",
     dark: "#0e6f70",
     tiers: [
@@ -50,7 +50,7 @@ const GATE_TYPES = {
       { amount: 10, cost: 70 },
       { amount: 20, cost: 150 },
     ],
-    desc: (t) => `통과하는 총알에 ${t.amount}발을 추가합니다`,
+    desc: (t) => `총알이 처음 지나갈 때 내 공격력이 영구히 +${t.amount} 상승합니다 (총알 1개당 1회만 적용)`,
     label: (t) => `+${t.amount}`,
   },
   power: {
@@ -97,9 +97,10 @@ const state = {
   phase: "pending", // pending | build | battle | victory | defeat
   difficulty: null,
   mobSpeed: 60, bossSpeed: 30,
-  mobsToSpawn: 8, mobsSpawned: 0, mobSpawnInterval: 0.6, mobSpawnTimer: 0,
+  mobsToSpawn: 8, mobsSpawned: 0, mobSpawnInterval: 0.6, mobSpawnTimer: 0, mobBurstSize: 2,
   bossSpawned: false, bossAlive: false,
   fireInterval: 0.2, fireTimer: 0,
+  attackPower: 1,
   totalKilled: 0, totalEnemiesThisWave: 9,
   speedMultiplier: 1,
   rivals: { a: { p: 0, speed: 0 }, b: { p: 0, speed: 0 } },
@@ -112,6 +113,7 @@ const ctx = canvas.getContext("2d");
 const coinValueEl = document.getElementById("coinValue");
 const waveValueEl = document.getElementById("waveValue");
 const livesValueEl = document.getElementById("livesValue");
+const atkValueEl = document.getElementById("atkValue");
 const speedBtn = document.getElementById("speedBtn");
 const diffBtn = document.getElementById("diffBtn");
 const leftBtn = document.getElementById("leftBtn");
@@ -223,7 +225,7 @@ function startNewRun(diffKey) {
 }
 
 const CORNER_LANE = 0; // 왼쪽 구석 레인: 항상 +1 게이트로 채워짐
-const FREE_MULT_CAP = 16;
+const FREE_MULT_CAP = 70;
 
 function ensureCornerGates() {
   for (let r = 0; r < ROWS; r++) {
@@ -249,11 +251,11 @@ function countFreeMultGates() {
 function regenerateAutoMultGates() {
   const already = countFreeMultGates();
   if (already >= FREE_MULT_CAP) return;
-  const wanted = state.wave === 1 ? 5 : 2;
+  const wanted = state.wave === 1 ? 24 : 8;
   const count = Math.min(wanted, FREE_MULT_CAP - already);
   let attempts = 0;
   let placed = 0;
-  while (placed < count && attempts < 100) {
+  while (placed < count && attempts < 300) {
     attempts++;
     const r = Math.floor(Math.random() * ROWS);
     const l = Math.floor(Math.random() * LANES);
@@ -286,15 +288,17 @@ function setupWave(newHazards) {
   state.mobSpeed = zoneLen / (d.mobCrossTime * waveSpeedFactor);
   state.bossSpeed = zoneLen / (d.mobCrossTime * d.bossCrossTimeMult * waveSpeedFactor);
 
-  state.mobsToSpawn = Math.min(30, 8 + state.wave * 2);
+  state.mobsToSpawn = Math.min(90, 20 + state.wave * 5);
   state.mobsSpawned = 0;
   state.mobSpawnInterval = Math.max(0.25, d.spawnInterval - state.wave * 0.01);
   state.mobSpawnTimer = 0.4;
+  state.mobBurstSize = Math.min(6, 2 + Math.floor(state.wave / 2));
   state.bossSpawned = false;
   state.bossAlive = false;
 
   state.fireInterval = Math.max(0.09, 0.2 - state.wave * 0.004);
   state.fireTimer = 0;
+  state.attackPower = 1;
 
   state.totalKilled = 0;
   state.totalEnemiesThisWave = state.mobsToSpawn + 1;
@@ -312,10 +316,10 @@ function setupWave(newHazards) {
 
 function regenerateHazards() {
   state.hazards = {};
-  const count = Math.min(4, 1 + Math.floor(state.wave / 3));
+  const count = Math.min(14, 3 + Math.floor(state.wave / 2));
   let attempts = 0;
   let placed = 0;
-  while (placed < count && attempts < 60) {
+  while (placed < count && attempts < 200) {
     attempts++;
     const r = Math.floor(Math.random() * ROWS);
     const l = Math.floor(Math.random() * LANES);
@@ -511,6 +515,7 @@ function updateHud() {
   coinValueEl.textContent = formatNum(state.coins);
   waveValueEl.textContent = state.wave;
   livesValueEl.textContent = "❤️".repeat(Math.max(0, state.lives));
+  atkValueEl.textContent = formatNum(state.attackPower);
 }
 
 function updateRivals() {
@@ -540,8 +545,12 @@ function applyRow(bullet, row) {
       spawnFloatText(laneCenterX(l), state.rowY[row], def.label(tier), def.color, true);
       break;
     case "add":
-      bullet.count = Math.min(MAX_COUNT, bullet.count + tier.amount);
-      spawnFloatText(laneCenterX(l), state.rowY[row], def.label(tier), def.color);
+      if (!bullet.pickedPower) {
+        bullet.pickedPower = true;
+        state.attackPower += tier.amount;
+        spawnFloatText(laneCenterX(l), state.rowY[row], "⚡+" + tier.amount, def.color, true);
+        updateHud();
+      }
       break;
     case "power":
       bullet.dmg *= tier.factor;
@@ -555,18 +564,32 @@ function applyRow(bullet, row) {
   }
 }
 
+function shuffledLanes() {
+  const arr = [];
+  for (let i = 0; i < LANES; i++) arr.push(i);
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+  return arr;
+}
+
 function trySpawnEnemies(dt) {
   if (state.mobsSpawned < state.mobsToSpawn) {
     state.mobSpawnTimer -= dt;
     if (state.mobSpawnTimer <= 0) {
       state.mobSpawnTimer = state.mobSpawnInterval;
-      state.mobsSpawned++;
-      state.enemies.push({
-        kind: "mob",
-        lane: Math.floor(Math.random() * LANES),
-        y: state.topLine - 16,
-        hp: 1, maxHp: 1,
-      });
+      const burst = Math.min(state.mobBurstSize, state.mobsToSpawn - state.mobsSpawned);
+      const lanes = shuffledLanes();
+      for (let i = 0; i < burst; i++) {
+        state.mobsSpawned++;
+        state.enemies.push({
+          kind: "mob",
+          lane: lanes[i % lanes.length],
+          y: state.topLine - 16 - i * 16,
+          hp: 1, maxHp: 1,
+        });
+      }
     }
   } else if (!state.bossSpawned) {
     state.mobSpawnTimer -= dt;
@@ -606,7 +629,7 @@ function update(dt) {
   state.fireTimer -= dt;
   if (state.fireTimer <= 0) {
     state.fireTimer = state.fireInterval;
-    state.bullets.push({ lane: state.currentLane, y: state.bottomLine - 10, count: 1, dmg: 1, nextRow: ROWS - 1 });
+    state.bullets.push({ lane: state.currentLane, y: state.bottomLine - 10, count: 1, dmg: state.attackPower, pickedPower: false, nextRow: ROWS - 1 });
   }
 
   trySpawnEnemies(dt);
@@ -788,11 +811,18 @@ function drawPlayer(x, y) {
 
 function drawGateSlot(r, l) {
   const laneWidth = state.W / LANES;
-  const x0 = l * laneWidth + laneWidth * 0.08;
-  const w = laneWidth * 0.84;
-  const y0 = state.rowY[r] - state.rowGap * 0.36;
-  const h = state.rowGap * 0.72;
+  const x0 = l * laneWidth + laneWidth * 0.06;
+  const w = laneWidth * 0.88;
+  const y0 = state.rowY[r] - state.rowGap * 0.42;
+  const h = state.rowGap * 0.84;
   const cx = x0 + w / 2, cy = y0 + h / 2;
+  const rad = Math.min(8, h * 0.3, w * 0.15);
+
+  // 타일이 촘촘해서 글자 크기를 칸 크기에 맞춰 동적으로 줄인다
+  const labelFont = Math.max(7, Math.min(14, h * 0.6));
+  const smallFont = Math.max(6, labelFont * 0.62);
+  const showLabel = h >= 9;
+  const showSub = h >= 20;
 
   const hazard = state.hazards[r] && state.hazards[r][l];
   const gate = state.gates[r] && state.gates[r][l];
@@ -801,17 +831,19 @@ function drawGateSlot(r, l) {
   if (hazard) {
     ctx.fillStyle = "rgba(255, 93, 108, 0.18)";
     ctx.strokeStyle = "#ff5d6c";
-    ctx.setLineDash([6, 5]);
-    roundRect(x0, y0, w, h, 10);
+    if (h >= 8) ctx.setLineDash([5, 4]);
+    roundRect(x0, y0, w, h, rad);
     ctx.fill();
-    ctx.lineWidth = 2;
+    ctx.lineWidth = 1.5;
     ctx.stroke();
     ctx.setLineDash([]);
-    ctx.font = "bold 20px system-ui, sans-serif";
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
-    ctx.fillStyle = "#ff5d6c";
-    ctx.fillText("☠", cx, cy);
+    if (showLabel) {
+      ctx.font = `bold ${labelFont}px system-ui, sans-serif`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillStyle = "#ff5d6c";
+      ctx.fillText("☠", cx, cy);
+    }
   } else if (gate) {
     const def = GATE_TYPES[gate.type];
     const tier = def.tiers[gate.level];
@@ -819,39 +851,34 @@ function drawGateSlot(r, l) {
     grad.addColorStop(0, def.color);
     grad.addColorStop(1, def.dark);
     ctx.fillStyle = grad;
-    roundRect(x0, y0, w, h, 10);
+    roundRect(x0, y0, w, h, rad);
     ctx.fill();
-    ctx.strokeStyle = "rgba(255,255,255,0.35)";
-    ctx.lineWidth = 1.5;
+    ctx.strokeStyle = gate.free ? "rgba(255,224,140,0.6)" : "rgba(255,255,255,0.35)";
+    ctx.lineWidth = gate.free ? 2 : 1.2;
     ctx.stroke();
-    ctx.font = "bold 15px system-ui, sans-serif";
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
-    ctx.fillStyle = "#fff";
-    ctx.fillText(def.label(tier), cx, cy - 2);
-    if (gate.level > 0) {
-      ctx.font = "bold 9px system-ui, sans-serif";
-      ctx.fillStyle = "rgba(255,255,255,0.85)";
-      ctx.fillText("Lv." + (gate.level + 1), cx, cy + h * 0.32);
-    }
-    if (gate.free) {
-      ctx.font = "10px system-ui, sans-serif";
-      ctx.textAlign = "left";
-      ctx.textBaseline = "top";
-      ctx.fillStyle = "rgba(255,255,255,0.9)";
-      ctx.fillText("✨", x0 + 3, y0 + 2);
-    }
-  } else {
-    ctx.strokeStyle = "rgba(255,255,255,0.16)";
-    ctx.setLineDash([5, 5]);
-    roundRect(x0, y0, w, h, 10);
-    ctx.stroke();
-    ctx.setLineDash([]);
-    if (state.phase === "build") {
-      ctx.font = "16px system-ui, sans-serif";
+    if (showLabel) {
+      ctx.font = `bold ${labelFont}px system-ui, sans-serif`;
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
-      ctx.fillStyle = "rgba(255,255,255,0.25)";
+      ctx.fillStyle = "#fff";
+      ctx.fillText(def.label(tier), cx, cy - (showSub ? 2 : 0));
+      if (gate.level > 0 && showSub) {
+        ctx.font = `bold ${smallFont}px system-ui, sans-serif`;
+        ctx.fillStyle = "rgba(255,255,255,0.85)";
+        ctx.fillText("Lv." + (gate.level + 1), cx, cy + h * 0.32);
+      }
+    }
+  } else {
+    ctx.strokeStyle = "rgba(255,255,255,0.14)";
+    if (h >= 8) ctx.setLineDash([4, 4]);
+    roundRect(x0, y0, w, h, rad);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    if (state.phase === "build" && showLabel) {
+      ctx.font = `${labelFont}px system-ui, sans-serif`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillStyle = "rgba(255,255,255,0.22)";
       ctx.fillText("+", cx, cy);
     }
   }
