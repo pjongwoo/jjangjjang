@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>블롭 컨트롤 (Blob Control)</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="app">
+
+  <header id="hud">
+    <div class="hud-item" id="coinDisplay">
+      <span class="hud-icon">🪙</span><span id="coinValue">0</span>
+    </div>
+    <div class="hud-item" id="waveDisplay">
+      웨이브 <span id="waveValue">1</span>
+    </div>
+    <button id="speedBtn" class="hud-btn">1x</button>
+  </header>
+
+  <div id="rivalPanel">
+    <div class="rival-row" id="rivalYou">
+      <span class="rival-tag you">YOU</span>
+      <div class="rival-bar"><div class="rival-fill you-fill" id="youFill"></div></div>
+    </div>
+    <div class="rival-row" id="rivalA">
+      <span class="rival-tag">GoldenArrow</span>
+      <div class="rival-bar"><div class="rival-fill bot-fill" id="botAFill"></div></div>
+    </div>
+    <div class="rival-row" id="rivalB">
+      <span class="rival-tag">FrostBeak</span>
+      <div class="rival-bar"><div class="rival-fill bot-fill" id="botBFill"></div></div>
+    </div>
+  </div>
+
+  <div id="stageWrap">
+    <canvas id="game"></canvas>
+    <div id="bannerOverlay" class="hidden">
+      <div id="bannerText"></div>
+      <div id="bannerSub"></div>
+      <button id="bannerBtn" class="big-btn">계속</button>
+    </div>
+  </div>
+
+  <div id="controls">
+    <button id="leftBtn" class="lane-btn">◀</button>
+    <button id="actionBtn" class="big-btn">전투 시작</button>
+    <button id="rightBtn" class="lane-btn">▶</button>
+  </div>
+
+  <p id="hint">빌드 단계에서 칸을 눌러 게이트를 설치하세요. 전투 중에는 ◀ ▶ 또는 방향키/A·D로 레인을 조작합니다.</p>
+</div>
+
+<div id="shopModal" class="hidden">
+  <div id="shopBox">
+    <div id="shopHeader">
+      <span id="shopTitle">게이트 설치</span>
+      <button id="shopClose">✕</button>
+    </div>
+    <div id="shopBody"></div>
+  </div>
+</div>
+
+<script src="game.js"></script>
+</body>
+</html>
